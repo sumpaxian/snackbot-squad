@@ -666,7 +666,15 @@ function bindPointer(p) {
   });
   svg.addEventListener("dblclick", () => { if (p._draft?.type === "polygon" && p._draft.points.length >= 3) finishPolygon(p); });
 }
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") cancelDraft(); });
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") cancelDraft();
+  const tag = (e.target.tagName || "").toLowerCase();
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !["input", "select", "textarea"].includes(tag) && st.view === "gating") { e.preventDefault(); undo(); }
+});
+async function undo() {
+  try { await api("POST", "/api/undo"); await afterGateChange(); toast("Rückgängig gemacht"); } catch (e) { toast(e.message); }
+}
+$("#btnUndo").addEventListener("click", undo);
 function finishPolygon(p) {
   const pts = p._draft.points; p._draft = null;
   const uniq = pts.filter((q, i) => i === 0 || Math.hypot(q[0] - pts[i - 1][0], q[1] - pts[i - 1][1]) > 0.002);

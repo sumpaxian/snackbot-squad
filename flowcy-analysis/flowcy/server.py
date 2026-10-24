@@ -28,6 +28,16 @@ class State:
     project = Project()
     lock = threading.RLock()
     results_cache = {}
+    undo = []          # [(Panel, Strategie als dict)]
+
+
+def _snapshot(tree=None):
+    """Zustand vor einer Änderung merken (für Rückgängig, höchstens 50 Schritte)."""
+    p = S.project
+    t = tree or p.tree
+    panel = next((k for k, v in p.trees.items() if v is t), p.panel)
+    S.undo.append((panel, t.to_dict()))
+    del S.undo[:-50]
 
 
 S = State()
@@ -57,6 +67,7 @@ def open_folder(body: dict = Body(...)):
         try:
             if body.get("new", True):
                 S.project = Project()
+                S.undo.clear()
             P().open_folder(body["folder"])
         except Exception as e:  # noqa: BLE001
             _err(e)
@@ -337,6 +348,7 @@ def add_gate(body: dict = Body(...)):
         try:
             s = p.sample(body["sample"]) if body.get("sample") else None
             tree = p.tree_of(s.name) if s else p.tree
+            _snapshot(tree)
             spec = body["spec"]
             parent = body.get("parent", ROOT)
             if spec["kind"] == "quadrant":
@@ -374,6 +386,7 @@ def update_gate(nid: str, body: dict = Body(...)):
         tree = p.tree_with(nid)
         if nid not in tree.nodes:
             _err("Gate unbekannt", 404)
+        _snapshot(tree)
         try:
             s = p.sample(body["sample"]) if body.get("sample") else None
             spec = body["spec"]
@@ -404,6 +417,7 @@ def delete_gate(nid: str):
         tree = p.tree_with(nid)
         if nid not in tree.nodes:
             _err("Gate unbekannt", 404)
+        _snapshot(tree)
         g = tree.nodes[nid].gate
         if isinstance(g, QuadrantGate):
             for qid in [q for q, n in tree.nodes.items() if isinstance(n.gate, QuadrantGate) and n.gate.group == g.group]:
@@ -417,6 +431,7 @@ def delete_gate(nid: str):
 
 @app.post("/api/gates/{nid}/rename")
 def rename_gate(nid: str, body: dict = Body(...)):
+    _snapshot(P().tree_with(nid))
     P().tree_with(nid).rename(nid, body["name"], user=P().user)
     S.results_cache.clear()
     return {"ok": True}
@@ -424,9 +439,25 @@ def rename_gate(nid: str, body: dict = Body(...)):
 
 @app.post("/api/gates/{nid}/reset")
 def reset_gate(nid: str, body: dict = Body(...)):
+    _snapshot(P().tree_with(nid))
     P().tree_with(nid).reset_override(nid, body["sample"], user=P().user)
     S.results_cache.clear()
     return {"ok": True}
+
+
+@app.post("/api/undo")
+def undo():
+    from .tree import GatingTree
+    with S.lock:
+        if not S.undo:
+            _err("Nichts rückgängig zu machen")
+        panel, d = S.undo.pop()
+        t = GatingTree.from_dict(d)
+        t.log.append({"time": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+                      "user": P().user, "action": "Letzte Änderung rückgängig gemacht"})
+        P().trees[panel] = t
+        S.results_cache.clear()
+        return {"panel": panel, "remaining": len(S.undo)}
 
 
 @app.post("/api/propose")
@@ -593,6 +624,7 @@ def load_project(body: dict = Body(...)):
     with S.lock:
         try:
             S.project = Project.load(body["path"])
+            S.undo.clear()
         except Exception as e:  # noqa: BLE001
             _err(e)
         S.results_cache.clear()

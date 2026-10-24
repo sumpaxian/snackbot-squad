@@ -143,3 +143,15 @@ def test_figure_export(client, tmp_path):
     r = client.post("/api/export/figure", json={"x": "CD4", "y": "CD8", "out": str(tmp_path / "abb")}).json()
     assert r["rows"] == 2 and r["cols"] == 4
     assert (tmp_path / "abb.pdf").stat().st_size > 10_000 and (tmp_path / "abb.png").exists()
+
+
+def test_undo(client):
+    n0 = len(client.get("/api/tree").json()["nodes"])
+    client.post("/api/gates", json={"parent": "root", "name": "A", "spec": {"kind": "rectangle", "x": "FSC-A", "y": None, "xmin": 0.1, "xmax": 0.9}})
+    nid = next(n["id"] for n in client.get("/api/tree").json()["nodes"] if n["name"] == "A")
+    client.post(f"/api/gates/{nid}/rename", json={"name": "B"})
+    assert any(n["name"] == "B" for n in client.get("/api/tree").json()["nodes"])
+    client.post("/api/undo")
+    assert any(n["name"] == "A" for n in client.get("/api/tree").json()["nodes"])
+    client.post("/api/undo")
+    assert len(client.get("/api/tree").json()["nodes"]) == n0
