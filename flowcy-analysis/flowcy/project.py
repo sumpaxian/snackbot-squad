@@ -44,13 +44,62 @@ class Project:
         self.user = user
         self.folder = None
         self.samples = collections.OrderedDict()   # Name → Eintrag (Pfad, Kopf, Gruppe, QC)
-        self.tree = GatingTree(name)
+        self.trees = {"Standard": GatingTree("Standard")}   # Panel → Gating-Strategie
+        self.panel = "Standard"                               # aktives Panel der Oberfläche
         self.axes = {}                              # Kanal → {"transform": dict, "lo": float, "hi": float}
         self.excluded_time = {}                     # Probe → [[start, ende], …] aus der Fluss-QC
         self.file = None
         self._cache = collections.OrderedDict()
         self._lock = threading.RLock()
         self.cache_size = 3
+
+    # --- Panels ------------------------------------------------------------------
+    @property
+    def tree(self):
+        return self.trees.setdefault(self.panel, GatingTree(self.panel))
+
+    @tree.setter
+    def tree(self, t):
+        self.trees[self.panel] = t
+
+    def panel_of(self, name):
+        return (self.samples.get(name) or {}).get("panel") or "Standard"
+
+    def tree_of(self, name, activate=True):
+        panel = self.panel_of(name)
+        if activate:
+            self.panel = panel
+        return self.trees.setdefault(panel, GatingTree(panel))
+
+    def tree_with(self, nid):
+        """Strategie, die den Knoten enthält – bevorzugt die aktive."""
+        if nid in self.tree.nodes:
+            return self.tree
+        return next((t for t in self.trees.values() if nid in t.nodes), self.tree)
+
+    def set_panel(self, name, panel):
+        self.samples[name]["panel"] = panel or "Standard"
+        self.trees.setdefault(panel or "Standard", GatingTree(panel or "Standard"))
+
+    def panels_from_regex(self, regex, mapping=None):
+        rx = re.compile(regex)
+        n = 0
+        for name in self.samples:
+            m = rx.search(name)
+            if m:
+                key = m.group(1) if m.groups() else m.group(0)
+                self.set_panel(name, (mapping or {}).get(key, key))
+                n += 1
+        return n
+
+    def copy_strategy(self, src, dst, user=""):
+        """Strategie eines Panels in ein anderes übernehmen (z. B. gemeinsame Streulicht-Gates)."""
+        t = GatingTree.from_dict(self.trees[src].to_dict())
+        t.name = dst
+        t.overrides.clear()
+        t._touch(f"Strategie aus Panel „{src}“ übernommen", user)
+        self.trees[dst] = t
+        return t
 
     # --- Proben -----------------------------------------------------------------
     def open_folder(self, folder, pattern=r"\.fcs$"):
@@ -68,11 +117,12 @@ class Project:
                 self.samples[name] = {"name": name, "path": str(p), "events": h["events"],
                                       "channels": h["channels"], "labels": h["labels"], "ranges": h["ranges"],
                                       "cytometer": h["text"].get("cyt", ""), "date": h["text"].get("date", ""),
-                                      "vol_nl": _float(h["text"].get("vol")), "group": "", "qc": None,
+                                      "vol_nl": _float(h["text"].get("vol")), "group": "", "panel": "Standard", "qc": None,
                                       "error": None}
             except Exception as e:  # noqa: BLE001 – Datei bleibt sichtbar, mit Fehler
                 self.samples[name] = {"name": name, "path": str(p), "events": 0, "channels": [], "labels": [],
-                                      "ranges": [], "group": "", "qc": None, "error": str(e)}
+                                      "ranges": [], "group": "", "panel": "Standard", "qc": None,
+                                      "error": str(e)}
         if not self.name or self.name == "Neues Projekt":
             self.name = folder.name
         return list(self.samples.values())
@@ -131,7 +181,7 @@ class Project:
     def exclude_segments(self, name, segments, user=""):
         self.excluded_time[name] = [[float(a), float(b)] for a, b in segments]
         self.forget(name)
-        self.tree._touch(f"Zeitbereiche in {name} ausgeschlossen: " +
+        self.tree_of(name, activate=False)._touch(f"Zeitbereiche in {name} ausgeschlossen: " +
                          ", ".join(f"{a:.4g}–{b:.4g}" for a, b in segments) if segments else
                          f"Zeitausschluss in {name} aufgehoben", user)
 
@@ -186,7 +236,12 @@ class Project:
             elif is_time(channel):
                 t = default_transform(channel, s.max_range(channel), vals)
             else:
-                t = Transform("logicle", default_transform(channel, s.max_range(channel), vals).params)
+                top = s.max_range(channel)
+                fin = vals[np.isfinite(vals)]
+                q = float(np.percentile(fin, 99.99)) if fin.size else top
+                if 0 < q < top / 100:      # Daten nutzen nur einen kleinen Teil des Messbereichs
+                    top = float(10 ** np.ceil(np.log10(q * 1.5)))
+                t = Transform("logicle", default_transform(channel, top, vals).params)
             lo, hi = auto_range(t.forward(vals))
             self.axes[channel] = {"transform": t.to_dict(), "lo": lo, "hi": hi}
         a = self.axes[channel]
@@ -260,8 +315,9 @@ class Project:
     # --- Speichern --------------------------------------------------------------
     def to_dict(self):
         return {"format": "flowcy-project", "version": 1, "name": self.name, "folder": self.folder,
-                "samples": [{k: e.get(k) for k in ("name", "path", "group")} for e in self.samples.values()],
-                "axes": self.axes, "excluded_time": self.excluded_time, "tree": self.tree.to_dict(),
+                "samples": [{k: e.get(k) for k in ("name", "path", "group", "panel")} for e in self.samples.values()],
+                "axes": self.axes, "excluded_time": self.excluded_time, "panel": self.panel,
+                "trees": {k: t.to_dict() for k, t in self.trees.items()},
                 "saved": dt.datetime.now().isoformat(timespec="seconds")}
 
     def save(self, path=None):
@@ -280,9 +336,14 @@ class Project:
         for s in d.get("samples", []):
             if s["name"] in p.samples:
                 p.samples[s["name"]]["group"] = s.get("group", "")
+                p.samples[s["name"]]["panel"] = s.get("panel") or "Standard"
         p.axes = d.get("axes", {})
         p.excluded_time = d.get("excluded_time", {})
-        p.tree = GatingTree.from_dict(d["tree"])
+        if "trees" in d:
+            p.trees = {k: GatingTree.from_dict(t) for k, t in d["trees"].items()}
+        else:
+            p.trees = {"Standard": GatingTree.from_dict(d["tree"])}
+        p.panel = d.get("panel", next(iter(p.trees)))
         p.file = str(path)
         return p
 

@@ -191,17 +191,24 @@ function renderImport() {
     grp.addEventListener("change", async () => {
       try { await api("PUT", `/api/samples/${encodeURIComponent(x.name)}/group`, { group: grp.value }); x.group = grp.value; renderImport(); } catch (e) { fail(e); }
     });
+    const pan = h("input", { value: x.panel || "Standard", "aria-label": "Panel " + x.name, list: "panelNames", style: "width:120px" });
+    pan.addEventListener("change", async () => {
+      try { await api("PUT", `/api/samples/${encodeURIComponent(x.name)}/panel`, { panel: pan.value }); x.panel = pan.value; renderImport(); } catch (e) { fail(e); }
+    });
     const qcBtn = h("button", { type: "button", onclick: () => runQc(x.name) }, "QC");
     return h("tr", { class: x.name === st.detail ? "sel" : "" },
       h("td", { class: "file" }, h("button", { type: "button", onclick: () => showDetail(x.name) }, x.name)),
       h("td", { class: "num" }, x.error ? "Fehler" : fmtInt(x.events)),
       h("td", {}, grp),
+      h("td", {}, pan),
       h("td", {}, x.error ? h("span", { class: "chip warn", title: x.error }, "nicht lesbar") : qcChip(x.qc)),
       h("td", {}, spark(x.qc?.flow?.rate) || ""),
       h("td", {}, x.error ? "" : qcBtn));
   }));
   let dl = $("#groupNames"); if (!dl) { dl = h("datalist", { id: "groupNames" }); document.body.append(dl); }
   dl.replaceChildren(...[...groups].map((g) => h("option", { value: g })));
+  let pl = $("#panelNames"); if (!pl) { pl = h("datalist", { id: "panelNames" }); document.body.append(pl); }
+  pl.replaceChildren(...[...new Set(st.samples.map((x) => x.panel || "Standard"))].map((g) => h("option", { value: g })));
 }
 async function runQc(name) {
   try {
@@ -279,6 +286,11 @@ $("#btnGrpRegex").addEventListener("click", async () => {
   $("#grpMap").value.split(",").map((x) => x.trim()).filter(Boolean).forEach((pair) => { const [k, v] = pair.split("="); if (k && v) mapping[k.trim()] = v.trim(); });
   try { const r = await api("POST", "/api/groups/regex", { regex: $("#grpRegex").value, mapping }); toast(`${r.assigned} Proben zugeordnet`); await refreshInfo(); } catch (e) { fail(e); }
 });
+$("#btnPanelRegex").addEventListener("click", async () => {
+  const mapping = {};
+  $("#panelMap").value.split(",").map((x) => x.trim()).filter(Boolean).forEach((pair) => { const [k, v] = pair.split("="); if (k && v) mapping[k.trim()] = v.trim(); });
+  try { const r = await api("POST", "/api/panels/regex", { regex: $("#panelRegex").value, mapping }); toast(`${r.assigned} Proben Panels zugeordnet`); await refreshInfo(); } catch (e) { fail(e); }
+});
 let grpCsv = "";
 $("#grpFile").addEventListener("change", async (e) => {
   const f = e.target.files[0]; if (!f) return;
@@ -346,6 +358,7 @@ async function renderGating() {
   const x = st.samples.find((y) => y.name === st.sample);
   $("#gatingTitle").textContent = st.sample || "Keine Probe";
   $("#gatingSub").textContent = x ? `${fmtInt(x.events)} Ereignisse${x.group ? " · " + x.group : ""}` : "Zuerst unter Import einen Ordner öffnen";
+  $("#gatingPanel").textContent = "Panel: " + (x?.panel || "Standard");
   const w = $("#gatingWarn");
   if (x?.qc?.status === "warn") { w.textContent = "QC: " + x.qc.issues[0]; w.classList.remove("hidden"); } else w.classList.add("hidden");
   renderPlots();
@@ -369,6 +382,9 @@ function renderTree() {
   }, h("span", {}, n.name, n.override ? h("span", { class: "ov", title: "für diese Probe angepasst" }, "angepasst") : null),
   h("span", { class: "pct" }, n.depth === 0 ? fmtInt(n.count) : fmtPct(n.pct_parent)))));
   renderNodeStats();
+  const others = (st.tree.panels || []).filter((q) => q !== st.tree.panel);
+  $("#copyFrom").replaceChildren(...others.map((q) => h("option", { value: q }, q)));
+  $("#btnCopyPanel").disabled = !others.length;
   $("#log").replaceChildren(...st.tree.log.slice().reverse().slice(0, 30).map((e) => h("li", {}, h("time", {}, (e.time || "").slice(11, 16)), e.action + (e.user ? " · " + e.user : ""))));
   renderPopList();
 }
@@ -486,6 +502,13 @@ function drawFoot(p) {
   const btn = (label, fn) => h("button", { type: "button", onclick: fn }, label);
   const items = [h("span", {}, `${fmtInt(d.n)} Ereignisse${d.offscale ? ` · ${fmtInt(d.offscale)} außerhalb` : ""}`), h("span", { class: "grow" })];
   if (d.y) {
+    items.push(btn("Alle Proben als Abbildung", async () => {
+      try {
+        toast("Erzeuge Abbildung aller Proben…", 4000);
+        const r = await api("POST", "/api/export/figure", { node: p.node, x: p.x, y: p.y, palette: st.palette, title: nodeById(p.node)?.name });
+        toast(`Gespeichert: ${r.pdf} (und PNG)`, 9000);
+      } catch (e) { fail(e); }
+    }));
     items.push(btn("Vorschlag: Population", () => propose(p, { kind: "population" })));
     if (/FSC.*A$/i.test(p.x) && /FSC.*H$/i.test(p.y || "")) items.push(btn("Vorschlag: Einzelzellen", () => propose(p, { kind: "singlet" })));
   } else {
@@ -704,6 +727,11 @@ async function propose(p, opts) {
 }
 window.addEventListener("resize", () => st.plots.forEach((p) => p._data && drawGates(p)));
 
+$("#btnCopyPanel").addEventListener("click", async () => {
+  const src = $("#copyFrom").value; if (!src) return;
+  if (!confirm(`Die Strategie von „${src}“ ersetzt die von „${st.tree.panel}“. Fortfahren?`)) return;
+  try { await api("POST", "/api/panels/copy", { src, dst: st.tree.panel }); await afterGateChange(); toast("Strategie übernommen"); } catch (e) { fail(e); }
+});
 $("#btnImportWsp").addEventListener("click", async () => {
   let path = null;
   if (window.pywebview?.api?.choose_file) path = await window.pywebview.api.choose_file("FlowJo-Workspace (*.wsp)");
@@ -745,10 +773,10 @@ async function renderCompare() {
   if (!st.cmpNode) { $("#cmpTitle").textContent = "Noch keine Gates"; return; }
   const n = nodeById(st.cmpNode);
   $("#cmpTitle").textContent = n?.name || "–";
-  $("#cmpSub").textContent = n?.path || "";
+  $("#cmpSub").textContent = (n?.path || "") + " · Panel " + st.tree.panel;
   try {
     toast("Berechne alle Proben…", 1500);
-    const r = await api("POST", "/api/compare", { node: st.cmpNode, metric: $("#metric").value, reference: rg.value, correction: $("#correction").value });
+    const r = await api("POST", "/api/compare", { node: st.cmpNode, panel: st.tree.panel, metric: $("#metric").value, reference: rg.value, correction: $("#correction").value });
     drawStrip(r);
     drawTests(r);
     await drawResultTable();
@@ -803,7 +831,7 @@ async function drawResultTable() {
   const rows = await api("GET", "/api/results");
   const nodes = st.tree.nodes.filter((n) => n.id !== "root");
   const by = {};
-  rows.forEach((r) => { (by[r.sample] ||= { group: r.group })[r.id] = r; });
+  rows.filter((r) => r.panel === st.tree.panel).forEach((r) => { (by[r.sample] ||= { group: r.group })[r.id] = r; });
   const t = $("#resultTable");
   t.replaceChildren(h("thead", {}, h("tr", {}, h("th", {}, "Probe"), h("th", {}, "Gruppe"), ...nodes.map((n) => h("th", { class: "num", title: n.path, style: n.id === st.cmpNode ? "color:var(--accent)" : "" }, n.name)))),
     h("tbody", {}, ...Object.entries(by).map(([name, r]) => h("tr", {}, h("td", { style: "font-family:var(--mono)" }, name), h("td", {}, r.group || ""),

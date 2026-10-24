@@ -118,3 +118,28 @@ def test_project_save_load(client, tmp_path):
     client.post("/api/project/load", json={"path": f})
     names = [n["name"] for n in client.get("/api/tree").json()["nodes"]]
     assert "FSC" in names and client.get("/api/info").json()["samples"] == 8
+
+
+def test_panels_separate_strategies(client):
+    r = client.post("/api/panels/regex", json={"regex": r"^([KB])", "mapping": {"K": "Panel K", "B": "Panel B"}}).json()
+    assert r["assigned"] == 8 and set(r["panels"]) >= {"Panel K", "Panel B"}
+    client.post("/api/gates", json={"parent": "root", "name": "nur K", "sample": "K01_PBMC.fcs",
+                                    "spec": {"kind": "rectangle", "x": "FSC-A", "y": None, "xmin": 0.1, "xmax": 0.9}})
+    tk = [n["name"] for n in client.get("/api/tree", params={"sample": "K02_PBMC.fcs"}).json()["nodes"]]
+    tb = [n["name"] for n in client.get("/api/tree", params={"sample": "B01_PBMC.fcs"}).json()["nodes"]]
+    assert "nur K" in tk and "nur K" not in tb
+    client.post("/api/panels/copy", json={"src": "Panel K", "dst": "Panel B"})
+    tb = [n["name"] for n in client.get("/api/tree", params={"sample": "B01_PBMC.fcs"}).json()["nodes"]]
+    assert "nur K" in tb
+    rows = client.get("/api/results").json()
+    assert {r["panel"] for r in rows} == {"Panel K", "Panel B"}
+
+
+def test_figure_export(client, tmp_path):
+    client.post("/api/groups/regex", json={"regex": r"^([KB])\d"})
+    plot = client.post("/api/plot", json={"sample": "K01_PBMC.fcs", "x": "CD4", "y": "CD8"}).json()
+    client.post("/api/gates", json={"parent": "root", "sample": "K01_PBMC.fcs",
+                                    "spec": {"kind": "quadrant", "x": "CD4", "y": "CD8", "xdiv": 0.45, "ydiv": 0.45}})
+    r = client.post("/api/export/figure", json={"x": "CD4", "y": "CD8", "out": str(tmp_path / "abb")}).json()
+    assert r["rows"] == 2 and r["cols"] == 4
+    assert (tmp_path / "abb.pdf").stat().st_size > 10_000 and (tmp_path / "abb.png").exists()

@@ -45,11 +45,11 @@
       <div class="panel">
         <div class="panel-head"><h2>Proben</h2><span class="muted small" id="sampleCount"></span></div>
         <div class="scroll"><table class="data" id="sampleTable"><thead><tr>
-          <th>Datei</th><th class="num">Ereignisse</th><th>Gruppe</th><th>QC</th><th>Flussrate</th><th></th>
+          <th>Datei</th><th class="num">Ereignisse</th><th>Gruppe</th><th>Panel</th><th>QC</th><th>Flussrate</th><th></th>
         </tr></thead><tbody></tbody></table></div>
       </div>
       <div class="panel">
-        <div class="panel-head"><h2>Gruppen zuordnen</h2></div>
+        <div class="panel-head"><h2>Gruppen und Panels zuordnen</h2></div>
         <div class="form-grid">
           <label>Aus Dateinamen (regulärer Ausdruck, erste Klammer = Gruppe)
             <input id="grpRegex" placeholder="z. B. ^([KB])\d">
@@ -69,6 +69,15 @@
             <input id="grpIdRegex" placeholder="z. B. ^[ABC]\d(\d{3})">
           </label>
           <button type="button" id="btnGrpTable">Zuordnen</button>
+        </div>
+        <div class="form-grid">
+          <label>Panel aus Dateinamen (eigene Gating-Strategie je Panel)
+            <input id="panelRegex" placeholder="z. B. ^([ABC])">
+          </label>
+          <label>Übersetzung (optional)
+            <input id="panelMap" placeholder="A=T-Zellen, B=Innate, C=Fibroblasten">
+          </label>
+          <button type="button" id="btnPanelRegex">Zuordnen</button>
         </div>
       </div>
     </main>
@@ -118,6 +127,7 @@
       <div class="pane-head">
         <h1 id="gatingTitle">–</h1>
         <span class="muted" id="gatingSub"></span>
+        <span id="gatingPanel" class="chip"></span>
         <span id="gatingWarn" class="chip warn hidden"></span>
       </div>
       <div id="plots" class="plots"></div>
@@ -129,6 +139,13 @@
       <div id="nodeStats" class="stats-box"></div>
       <h2 class="cap">Änderungsprotokoll</h2>
       <ol id="log" class="log"></ol>
+      <h2 class="cap">Panel</h2>
+      <div class="stack">
+        <label class="block" style="margin:0">Strategie übernehmen von
+          <select id="copyFrom"></select>
+        </label>
+        <button type="button" id="btnCopyPanel">In dieses Panel übernehmen</button>
+      </div>
       <h2 class="cap">Import</h2>
       <div class="stack">
         <button type="button" id="btnImportWsp">FlowJo-Workspace (.wsp)…</button>

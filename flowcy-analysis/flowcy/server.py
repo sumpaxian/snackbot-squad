@@ -75,7 +75,7 @@ def demo(body: dict = Body(default={})):
 
 @app.get("/api/samples")
 def samples():
-    return [{k: e.get(k) for k in ("name", "events", "group", "qc", "error", "cytometer", "date", "vol_nl")}
+    return [{k: e.get(k) for k in ("name", "events", "group", "panel", "qc", "error", "cytometer", "date", "vol_nl")}
             for e in P().samples.values()]
 
 
@@ -100,6 +100,30 @@ def set_group(name: str, body: dict = Body(...)):
     P().set_group(name, body.get("group", ""))
     S.results_cache.clear()
     return {"ok": True}
+
+
+@app.put("/api/samples/{name}/panel")
+def set_panel(name: str, body: dict = Body(...)):
+    P().set_panel(name, body.get("panel", ""))
+    S.results_cache.clear()
+    return {"ok": True}
+
+
+@app.post("/api/panels/regex")
+def panels_regex(body: dict = Body(...)):
+    try:
+        n = P().panels_from_regex(body["regex"], body.get("mapping"))
+    except Exception as e:  # noqa: BLE001
+        _err(e)
+    S.results_cache.clear()
+    return {"assigned": n, "panels": list(P().trees)}
+
+
+@app.post("/api/panels/copy")
+def panels_copy(body: dict = Body(...)):
+    P().copy_strategy(body["src"], body["dst"], P().user)
+    S.results_cache.clear()
+    return {"panels": list(P().trees)}
 
 
 @app.post("/api/groups/regex")
@@ -220,7 +244,7 @@ def plot(body: dict = Body(...)):
             s = p.sample(body["sample"])
         except Exception as e:  # noqa: BLE001
             _err(e)
-        tree = p.tree
+        tree = p.tree_of(s.name)
         node = body.get("node", ROOT)
         if node not in tree.nodes:
             node = ROOT
@@ -273,7 +297,7 @@ def plot(body: dict = Body(...)):
 
 def _tree_payload(sample=None):
     p = P()
-    tree = p.tree
+    tree = p.tree_of(sample) if sample and sample in p.samples else p.tree
     stats = {}
     if sample and sample in p.samples:
         s = p.sample(sample)
@@ -297,7 +321,7 @@ def _tree_payload(sample=None):
             "path": "/".join(tree.path(nid)[1:]),
             "refs": getattr(g, "refs", None), "op": getattr(g, "op", None),
         })
-    return {"name": tree.name, "nodes": nodes, "log": tree.log[-50:]}
+    return {"name": tree.name, "panel": p.panel, "panels": list(p.trees), "nodes": nodes, "log": tree.log[-50:]}
 
 
 @app.get("/api/tree")
@@ -312,6 +336,7 @@ def add_gate(body: dict = Body(...)):
     with S.lock:
         try:
             s = p.sample(body["sample"]) if body.get("sample") else None
+            tree = p.tree_of(s.name) if s else p.tree
             spec = body["spec"]
             parent = body.get("parent", ROOT)
             if spec["kind"] == "quadrant":
@@ -322,7 +347,7 @@ def add_gate(body: dict = Body(...)):
                 yl = _short(p, g0.y)
                 default = [f"{xl}⁻ {yl}⁺", f"{xl}⁺ {yl}⁺", f"{xl}⁻ {yl}⁻", f"{xl}⁺ {yl}⁻"]
                 for name, g in quadrant_set(g0.x, g0.y, g0.xdiv, g0.ydiv, g0.xform, g0.yform, names or default):
-                    ids.append(p.tree.add(name, g, parent, user=p.user))
+                    ids.append(tree.add(name, g, parent, user=p.user))
                 S.results_cache.clear()
                 return {"ids": ids}
             if spec["kind"] == "boolean":
@@ -330,7 +355,7 @@ def add_gate(body: dict = Body(...)):
                 g = BooleanGate(spec["op"], spec["refs"], spec.get("complements"))
             else:
                 g = p.gate_from_display(spec, s)
-            nid = p.tree.add(body.get("name") or "Gate", g, parent, user=p.user)
+            nid = tree.add(body.get("name") or "Gate", g, parent, user=p.user)
         except Exception as e:  # noqa: BLE001
             _err(e)
         S.results_cache.clear()
@@ -346,25 +371,26 @@ def _short(p, ch):
 def update_gate(nid: str, body: dict = Body(...)):
     p = P()
     with S.lock:
-        if nid not in p.tree.nodes:
+        tree = p.tree_with(nid)
+        if nid not in tree.nodes:
             _err("Gate unbekannt", 404)
         try:
             s = p.sample(body["sample"]) if body.get("sample") else None
             spec = body["spec"]
             only = body.get("scope") == "sample" and s is not None
-            old = p.tree.gate_for(nid, s.name if s else None)
+            old = tree.gate_for(nid, s.name if s else None)
             if spec["kind"] == "quadrant" and isinstance(old, QuadrantGate):
                 # alle vier Quadranten der Gruppe gemeinsam verschieben
-                for qid, n in p.tree.nodes.items():
-                    q = p.tree.gate_for(qid, s.name if (only and s) else None)
+                for qid in list(tree.nodes):
+                    q = tree.gate_for(qid, s.name if (only and s) else None)
                     if isinstance(q, QuadrantGate) and q.group == old.group:
                         g = p.gate_from_display({**spec, "quadrant": q.quadrant, "group": q.group}, s)
                         g.id = q.id
-                        p.tree.set_gate(qid, g, sample=s.name if only else None, user=p.user)
+                        tree.set_gate(qid, g, sample=s.name if only else None, user=p.user)
             else:
                 g = p.gate_from_display(spec, s)
                 g.id = old.id if old is not None else g.id
-                p.tree.set_gate(nid, g, sample=s.name if only else None, user=p.user)
+                tree.set_gate(nid, g, sample=s.name if only else None, user=p.user)
         except Exception as e:  # noqa: BLE001
             _err(e)
         S.results_cache.clear()
@@ -375,27 +401,30 @@ def update_gate(nid: str, body: dict = Body(...)):
 def delete_gate(nid: str):
     p = P()
     with S.lock:
-        g = p.tree.nodes.get(nid).gate if nid in p.tree.nodes else None
+        tree = p.tree_with(nid)
+        if nid not in tree.nodes:
+            _err("Gate unbekannt", 404)
+        g = tree.nodes[nid].gate
         if isinstance(g, QuadrantGate):
-            for qid in [q for q, n in p.tree.nodes.items() if isinstance(n.gate, QuadrantGate) and n.gate.group == g.group]:
-                if qid in p.tree.nodes:
-                    p.tree.remove(qid, user=p.user)
+            for qid in [q for q, n in tree.nodes.items() if isinstance(n.gate, QuadrantGate) and n.gate.group == g.group]:
+                if qid in tree.nodes:
+                    tree.remove(qid, user=p.user)
         else:
-            p.tree.remove(nid, user=p.user)
+            tree.remove(nid, user=p.user)
         S.results_cache.clear()
         return {"ok": True}
 
 
 @app.post("/api/gates/{nid}/rename")
 def rename_gate(nid: str, body: dict = Body(...)):
-    P().tree.rename(nid, body["name"], user=P().user)
+    P().tree_with(nid).rename(nid, body["name"], user=P().user)
     S.results_cache.clear()
     return {"ok": True}
 
 
 @app.post("/api/gates/{nid}/reset")
 def reset_gate(nid: str, body: dict = Body(...)):
-    P().tree.reset_override(nid, body["sample"], user=P().user)
+    P().tree_with(nid).reset_override(nid, body["sample"], user=P().user)
     S.results_cache.clear()
     return {"ok": True}
 
@@ -406,7 +435,7 @@ def propose(body: dict = Body(...)):
     p = P()
     with S.lock:
         s = p.sample(body["sample"])
-        rows = np.flatnonzero(p.tree.masks(s)[body.get("node", ROOT)])
+        rows = np.flatnonzero(p.tree_of(s.name).masks(s)[body.get("node", ROOT)])
         x, y = body["x"], body.get("y")
         tx, xlo, xhi = p.axis(x, s)
         try:
@@ -439,7 +468,8 @@ def propose(body: dict = Body(...)):
 # --- Ergebnisse & Vergleich -------------------------------------------------------------
 
 def _results(channels=()):
-    key = (len(P().tree.log), tuple(channels), tuple((n, e["group"]) for n, e in P().samples.items()))
+    key = (tuple((k, len(t.log)) for k, t in P().trees.items()), tuple(channels),
+           tuple((n, e["group"], e.get("panel")) for n, e in P().samples.items()))
     if key in S.results_cache:
         return S.results_cache[key]
     rows = []
@@ -448,7 +478,9 @@ def _results(channels=()):
             continue
         s = P().sample(name)
         s.group = e.get("group", "")
-        for r in P().tree.statistics(s, channels=[c for c in channels if c in s.channels]):
+        tree = P().tree_of(name, activate=False)
+        for r in tree.statistics(s, channels=[c for c in channels if c in s.channels]):
+            r["panel"] = P().panel_of(name)
             vol = e.get("vol_nl")
             r["per_ul"] = r["count"] / (vol / 1000.0) if vol else None
             r["count_cv"] = count_cv(r["count"])
@@ -469,7 +501,8 @@ def compare(body: dict = Body(...)):
     with S.lock:
         metric = body.get("metric", "pct_parent")
         ch = [metric.split(":", 1)[1]] if ":" in metric else []
-        rows = [r for r in _results(ch) if r["id"] == body["node"]]
+        panel = body.get("panel") or P().panel
+        rows = [r for r in _results(ch) if r["id"] == body["node"] and r["panel"] == panel]
         vals, per_sample = {}, []
         for r in rows:
             v = r.get(metric)
@@ -495,6 +528,22 @@ def export_stats(channels: str = ""):
     df.to_csv(buf, index=False, sep=";", decimal=",")
     return PlainTextResponse(buf.getvalue(), media_type="text/csv",
                              headers={"Content-Disposition": "attachment; filename=flowcy_statistik.csv"})
+
+
+@app.post("/api/export/figure")
+def export_figure(body: dict = Body(...)):
+    """Ein Plot je Probe mit identischen Achsen, nach Gruppen – PDF und PNG."""
+    from .figures import sample_grid
+    with S.lock:
+        p = P()
+        panel = body.get("panel") or p.panel
+        names = body.get("samples") or [n for n, e in p.samples.items() if not e.get("error") and p.panel_of(n) == panel]
+        try:
+            res = sample_grid(p, body.get("node", ROOT), body["x"], body["y"], names, out=body.get("out"),
+                              palette=body.get("palette", "pseudo"), title=body.get("title"))
+        except Exception as e:  # noqa: BLE001
+            _err(e)
+        return res
 
 
 @app.get("/api/export/strategy.json")
