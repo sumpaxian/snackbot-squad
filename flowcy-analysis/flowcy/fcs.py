@@ -99,12 +99,14 @@ class Sample:
 
     def events(self, compensated: bool = True) -> np.ndarray:
         if not compensated or self.compensation is None:
+            if self.raw.dtype != np.float64:      # Memory-Map aus dem Cache: einmal in float64
+                self.raw = np.array(self.raw, dtype=np.float64)
             return self.raw
         if self._comp_cache is None:
             chans, m = self.compensation
             idx = [self.index(c) for c in chans]
-            out = self.raw.copy()
-            out[:, idx] = self.raw[:, idx] @ np.linalg.inv(m)
+            out = np.array(self.raw, dtype=np.float64)
+            out[:, idx] = out[:, idx] @ np.linalg.inv(m)
             self._comp_cache = out
         return self._comp_cache
 
@@ -129,10 +131,68 @@ class Sample:
         }
 
 
-def load_sample(path, checksum: bool = True, name: str | None = None) -> Sample:
+CACHE_VERSION = 1
+
+
+def _cache_key(path: pathlib.Path) -> str:
+    st = path.stat()
+    return hashlib.sha1(f"{path.resolve()}|{st.st_size}|{st.st_mtime_ns}|{CACHE_VERSION}".encode()).hexdigest()[:20]
+
+
+def prune_cache(cache_dir, max_bytes=8e9):
+    """Älteste Cache-Einträge löschen, bis der Ordner unter max_bytes liegt (Standard 8 GB)."""
+    cache_dir = pathlib.Path(cache_dir)
+    if not cache_dir.is_dir():
+        return 0
+    files = sorted(cache_dir.glob("*.npy"), key=lambda f: f.stat().st_atime)
+    total = sum(f.stat().st_size for f in files)
+    removed = 0
+    for f in files:
+        if total <= max_bytes:
+            break
+        total -= f.stat().st_size
+        f.unlink(missing_ok=True)
+        f.with_suffix(".json").unlink(missing_ok=True)
+        removed += 1
+    return removed
+
+
+def load_sample(path, checksum: bool = True, name: str | None = None, cache_dir=None) -> Sample:
+    """FCS-Datei lesen. Mit cache_dir wird ein Abbild (.npy + .json) angelegt und beim nächsten
+    Mal per Memory-Map geladen – um ein Vielfaches schneller als erneutes Parsen."""
+    path = pathlib.Path(path)
+    if cache_dir:
+        import json
+        cache_dir = pathlib.Path(cache_dir)
+        key = _cache_key(path)
+        npy, meta = cache_dir / f"{key}.npy", cache_dir / f"{key}.json"
+        if npy.exists() and meta.exists():
+            try:
+                m = json.loads(meta.read_text(encoding="utf-8"))
+                raw = np.load(npy, mmap_mode="r")
+                spill = (m["spill"][0], np.asarray(m["spill"][1], float)) if m.get("spill") else None
+                return Sample(name=name or path.name, path=str(path), channels=m["channels"], labels=m["labels"],
+                              raw=raw, metadata=m["metadata"], ranges=m["ranges"], spill=spill,
+                              checksum=m.get("sha256") if checksum else None)
+            except Exception:  # noqa: BLE001 – defekter Cache: neu einlesen
+                pass
+        s = load_sample(path, checksum=checksum, name=name)
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            r32 = s.raw.astype(np.float32)
+            store = r32 if np.array_equal(r32, s.raw) else s.raw   # verlustfrei, sonst float64
+            np.save(npy, store)
+            prune_cache(cache_dir)
+            meta.write_text(json.dumps({
+                "channels": s.channels, "labels": s.labels, "ranges": s.ranges,
+                "metadata": {k: str(v) for k, v in s.metadata.items()},
+                "spill": [s.spill[0], s.spill[1].tolist()] if s.spill else None, "sha256": s.checksum,
+                "source": str(path)}, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+        return s
     import flowkit as fk
 
-    path = pathlib.Path(path)
     s = fk.Sample(str(path), ignore_offset_error=True, ignore_offset_discrepancy=True,
                   subsample=0)
     raw = np.asarray(s.get_events(source="raw"), dtype=np.float64)

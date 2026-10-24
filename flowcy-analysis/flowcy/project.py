@@ -22,6 +22,7 @@ from .transforms import Transform, default_transform, estimate_cofactor, is_scat
 from .tree import ROOT, GatingTree
 
 PROJECT_DIR = pathlib.Path.home() / "FlowCy" / "Projekte"
+CACHE_DIR = pathlib.Path.home() / "FlowCy" / "Cache"
 
 
 def header(path):
@@ -52,6 +53,7 @@ class Project:
         self._cache = collections.OrderedDict()
         self._lock = threading.RLock()
         self.cache_size = 3
+        self.cache_dir = CACHE_DIR
 
     # --- Panels ------------------------------------------------------------------
     @property
@@ -133,7 +135,7 @@ class Project:
                 self._cache.move_to_end(name)
                 return self._cache[name]
             entry = self.samples[name]
-            s = load_sample(entry["path"], checksum=False)
+            s = load_sample(entry["path"], checksum=False, cache_dir=self.cache_dir)
             s.group = entry.get("group", "")
             ex = self.excluded_time.get(name)
             if ex and s.time_channel:

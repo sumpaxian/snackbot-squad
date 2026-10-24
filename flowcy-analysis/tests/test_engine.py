@@ -192,3 +192,18 @@ def test_robust_cv_normal():
     rng = np.random.default_rng(0)
     v = rng.normal(1000, 100, 200_000)
     assert abs(robust_cv(v) - 10.0) < 0.2
+
+
+def test_disk_cache_identical(study, tmp_path):
+    folder, _ = study
+    a = load_sample(folder / "K02_PBMC.fcs")
+    b = load_sample(folder / "K02_PBMC.fcs", cache_dir=tmp_path)   # schreibt Cache
+    c = load_sample(folder / "K02_PBMC.fcs", cache_dir=tmp_path)   # liest Cache
+    assert isinstance(c.raw, np.memmap)
+    for s in (b, c):
+        assert s.channels == a.channels and s.labels == a.labels and s.ranges == a.ranges
+        np.testing.assert_array_equal(np.asarray(s.raw), a.raw)
+        np.testing.assert_array_equal(s.events(), a.events())
+        np.testing.assert_array_equal(s.spill[1], a.spill[1])
+    tree, _ = build_strategy(a)
+    assert [r["count"] for r in tree.statistics(a)] == [r["count"] for r in tree.statistics(c)]
