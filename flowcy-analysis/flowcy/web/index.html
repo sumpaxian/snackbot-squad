@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FlowCy Analysis</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="appbar">
+  <div class="brand">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="8" cy="15" r="3"/><circle cx="15" cy="9" r="4"/><circle cx="17.5" cy="17.5" r="2"/></svg>
+    <span>FlowCy Analysis</span>
+  </div>
+  <div class="project">
+    <span class="muted small">Projekt</span>
+    <span id="projectName">–</span>
+  </div>
+  <nav class="steps" aria-label="Arbeitsschritte">
+    <button type="button" data-view="import" class="step active">1 · Import &amp; QC</button>
+    <button type="button" data-view="gating" class="step">2 · Gating</button>
+    <button type="button" data-view="compare" class="step">3 · Vergleich &amp; Export</button>
+  </nav>
+  <div class="actions">
+    <label class="user"><span class="muted small">Bearbeiter</span><input id="userName" placeholder="Name" aria-label="Bearbeiter"></label>
+    <button type="button" id="btnSave" class="primary">Projekt speichern</button>
+  </div>
+</header>
+
+<!-- ================= Import & QC ================= -->
+<section id="view-import" class="view active">
+  <div class="toolbar">
+    <button type="button" id="btnOpen" class="primary">Ordner mit FCS-Dateien öffnen</button>
+    <input id="folderPath" class="path" placeholder="/Pfad/zum/Ordner" aria-label="Ordnerpfad">
+    <button type="button" id="btnOpenPath">Öffnen</button>
+    <span class="sep"></span>
+    <button type="button" id="btnLoadProject">Projekt laden…</button>
+    <button type="button" id="btnDemo">Beispielstudie</button>
+    <span class="grow"></span>
+    <button type="button" id="btnQcAll">QC für alle Proben</button>
+  </div>
+  <div class="split">
+    <main class="pane">
+      <div class="cards" id="importCards"></div>
+      <div class="panel">
+        <div class="panel-head"><h2>Proben</h2><span class="muted small" id="sampleCount"></span></div>
+        <div class="scroll"><table class="data" id="sampleTable"><thead><tr>
+          <th>Datei</th><th class="num">Ereignisse</th><th>Gruppe</th><th>QC</th><th>Flussrate</th><th></th>
+        </tr></thead><tbody></tbody></table></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Gruppen zuordnen</h2></div>
+        <div class="form-grid">
+          <label>Aus Dateinamen (regulärer Ausdruck, erste Klammer = Gruppe)
+            <input id="grpRegex" placeholder="z. B. ^([KB])\d">
+          </label>
+          <label>Übersetzung (optional, Schlüssel=Gruppe, mit Komma)
+            <input id="grpMap" placeholder="K=Kontrolle, B=Behandlung">
+          </label>
+          <button type="button" id="btnGrpRegex">Zuordnen</button>
+        </div>
+        <div class="form-grid">
+          <label>Aus Tabelle (CSV/TSV, z. B. Tier-ID → Arm)
+            <input type="file" id="grpFile" accept=".csv,.tsv,.txt">
+          </label>
+          <label>ID-Spalte <select id="grpKey"></select></label>
+          <label>Gruppen-Spalte <select id="grpCol"></select></label>
+          <label>ID aus Dateinamen (regulärer Ausdruck)
+            <input id="grpIdRegex" placeholder="z. B. ^[ABC]\d(\d{3})">
+          </label>
+          <button type="button" id="btnGrpTable">Zuordnen</button>
+        </div>
+      </div>
+    </main>
+    <aside class="side" id="sampleDetail">
+      <p class="muted">Probe in der Tabelle wählen.</p>
+    </aside>
+  </div>
+</section>
+
+<!-- ================= Gating ================= -->
+<section id="view-gating" class="view">
+  <div class="toolbar" role="toolbar" aria-label="Gate-Werkzeuge">
+    <div class="tools" id="tools">
+      <button type="button" data-tool="edit" class="tool active" title="Auswählen und bearbeiten" aria-label="Auswählen und bearbeiten"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3l6 16 2-7 7-2z"/></svg></button>
+      <button type="button" data-tool="polygon" class="tool" title="Polygon (Klicks, Doppelklick schließt)" aria-label="Polygon-Gate"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8l7-4 7 5-2 10H7z"/></svg></button>
+      <button type="button" data-tool="rect" class="tool" title="Rechteck (ziehen)" aria-label="Rechteck-Gate"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="1"/></svg></button>
+      <button type="button" data-tool="quad" class="tool" title="Quadranten (Klick setzt Mitte)" aria-label="Quadranten-Gate"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16"/><path d="M12 4v16M4 12h16"/></svg></button>
+      <button type="button" data-tool="range" class="tool" title="Bereich im Histogramm (ziehen)" aria-label="Bereichs-Gate"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h16M6 20v-6M10 20V8M14 20V5M18 20v-9"/></svg></button>
+    </div>
+    <span class="sep"></span>
+    <label>Gilt für
+      <select id="scope">
+        <option value="template">Vorlage – alle Proben</option>
+        <option value="sample">nur diese Probe</option>
+      </select>
+    </label>
+    <label>Darstellung
+      <select id="palette">
+        <option value="pseudo">Pseudocolor (FlowJo)</option>
+        <option value="viridis">Viridis</option>
+        <option value="gray">Graustufen</option>
+      </select>
+    </label>
+    <label>Auflösung
+      <select id="bins"><option>128</option><option selected>256</option><option>384</option></select>
+    </label>
+    <span class="grow"></span>
+    <span class="muted small" id="toolHint">Auswählen: Eckpunkte ziehen, Gate anklicken</span>
+    <button type="button" id="btnAddPlot">Plot hinzufügen</button>
+  </div>
+  <div class="split three">
+    <aside class="side left" aria-label="Proben">
+      <input type="search" id="sampleFilter" placeholder="Probe suchen" aria-label="Probe suchen">
+      <div id="sampleList" class="list"></div>
+    </aside>
+    <main class="pane">
+      <div class="pane-head">
+        <h1 id="gatingTitle">–</h1>
+        <span class="muted" id="gatingSub"></span>
+        <span id="gatingWarn" class="chip warn hidden"></span>
+      </div>
+      <div id="plots" class="plots"></div>
+      <div class="legend"><span class="muted small">Dichte</span><span id="legendBar" class="legend-bar"></span><span class="muted small">niedrig → hoch</span></div>
+    </main>
+    <aside class="side right" aria-label="Gating-Hierarchie">
+      <h2 class="cap">Gating-Hierarchie</h2>
+      <div id="tree" class="tree"></div>
+      <div id="nodeStats" class="stats-box"></div>
+      <h2 class="cap">Änderungsprotokoll</h2>
+      <ol id="log" class="log"></ol>
+      <h2 class="cap">Import</h2>
+      <div class="stack">
+        <button type="button" id="btnImportWsp">FlowJo-Workspace (.wsp)…</button>
+        <button type="button" id="btnImportStrategy">FlowCy-Strategie (.json)…</button>
+        <input type="file" id="strategyFile" accept=".json" hidden>
+      </div>
+    </aside>
+  </div>
+</section>
+
+<!-- ================= Vergleich & Export ================= -->
+<section id="view-compare" class="view">
+  <div class="split three">
+    <aside class="side left" aria-label="Populationen">
+      <h2 class="cap">Population</h2>
+      <div id="popList" class="list"></div>
+      <label class="block">Kennzahl
+        <select id="metric">
+          <option value="pct_parent">% der Elternpopulation</option>
+          <option value="pct_total">% aller Ereignisse</option>
+          <option value="count">Anzahl Ereignisse</option>
+          <option value="per_ul">Ereignisse pro µL ($VOL)</option>
+        </select>
+      </label>
+      <label class="block">Referenzgruppe <select id="refGroup"></select></label>
+      <label class="block">Korrektur für multiples Testen
+        <select id="correction">
+          <option value="holm">Holm</option>
+          <option value="bh">Benjamini-Hochberg (FDR)</option>
+          <option value="none">keine</option>
+        </select>
+      </label>
+    </aside>
+    <main class="pane">
+      <div class="panel">
+        <div class="panel-head"><h1 id="cmpTitle">–</h1><span class="muted small" id="cmpSub"></span></div>
+        <div id="strip" class="strip"></div>
+        <div id="cmpTests"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Ergebnistabelle</h2><span class="muted small">% der Elternpopulation</span></div>
+        <div class="scroll"><table class="data" id="resultTable"></table></div>
+      </div>
+    </main>
+    <aside class="side right" aria-label="Export">
+      <h2 class="cap">Export</h2>
+      <div class="stack">
+        <a class="btn-link" id="expCsv" href="/api/export/stats.csv">Statistiktabelle (CSV)</a>
+        <a class="btn-link" id="expStrategy" href="/api/export/strategy.json">Gating-Strategie (FlowCy-JSON)</a>
+        <button type="button" id="expSvg">Vergleichsplot als SVG</button>
+      </div>
+      <div class="note" id="cmpNote"></div>
+    </aside>
+  </div>
+</section>
+
+<div id="dialog" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
+  <form id="dlgForm" class="dialog-box">
+    <h2 id="dlgTitle">Gate benennen</h2>
+    <label>Name <input id="dlgInput" required></label>
+    <div id="dlgExtra"></div>
+    <div class="row end">
+      <button type="button" id="dlgCancel">Abbrechen</button>
+      <button type="submit" class="primary">Übernehmen</button>
+    </div>
+  </form>
+</div>
+<div id="toast" class="toast hidden" role="status"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

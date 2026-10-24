@@ -123,34 +123,61 @@ class Transform:
             return cls()
         return cls(d["kind"], dict(d.get("params", {})))
 
-    def ticks(self):
-        """Beschriftete Achsenstriche als (Rohwert, Anzeigewert, Text)."""
-        if self.kind == "linear":
-            lo, hi = self.params["min"], self.params["max"]
-            raw = np.linspace(lo, hi, 6)
-            return [(float(r), float(self.forward(r)), _short(r)) for r in raw]
-        top = self.params.get("T", self.params.get("max_value", 262144.0))
-        decades = range(1, int(np.floor(np.log10(top))) + 1)
-        cand = [-(10.0 ** e) for e in reversed(decades)] + [0.0] + [10.0 ** e for e in decades]
-        ticks, last = [], -np.inf
-        for v in cand:
+    def ticks(self, lo=None, hi=None):
+        """Beschriftete Achsenstriche im sichtbaren Bereich als (Rohwert, Anzeigewert, Text)."""
+        lo = -0.02 if lo is None else lo
+        hi = 1.02 if hi is None else hi
+        r0, r1 = sorted(float(v) for v in self.inverse(np.array([lo, hi])))
+        if self.kind == "linear" or not np.isfinite(r0 * r1):
+            span = r1 - r0
+            if span <= 0:
+                return []
+            step = 10 ** np.floor(np.log10(span / 5))
+            for m in (1, 2, 5, 10):
+                if span / (step * m) <= 6:
+                    step *= m
+                    break
+            raw = np.arange(np.ceil(r0 / step) * step, r1 + step * 1e-9, step) + 0.0
+            raw[np.abs(raw) < step * 1e-9] = 0.0
+            return [(float(r), float(self.forward(r)), _short(r, step)) for r in raw]
+        top = max(abs(r0), abs(r1), 10.0)
+        decades = range(0, int(np.floor(np.log10(top))) + 1)
+        if self.kind == "log":
+            cand = [m * 10.0 ** e for e in range(-3, decades.stop) for m in (1, 2, 5)]
+            prio = sorted(cand, key=lambda v: (0 if np.isclose(np.log10(v) % 1, 0) else 1, -v))
+        else:
+            # Vorrang: 0, dann große positive Dekaden, dann negative – dichte Striche fallen weg
+            prio = [0.0] + [10.0 ** e for e in reversed(decades)] + [-(10.0 ** e) for e in reversed(decades)]
+        min_gap = 0.07 * (hi - lo)
+        chosen = []
+        for v in prio:
+            if not (r0 <= v <= r1) or (self.kind == "log" and v <= 0):
+                continue
             pos = float(self.forward(v))
-            if np.isfinite(pos) and -0.02 <= pos <= 1.02 and pos - last >= 0.04:
-                ticks.append((v, pos, _pow10(v)))
-                last = pos
-        return ticks
+            if np.isfinite(pos) and all(abs(pos - c[1]) >= min_gap for c in chosen):
+                chosen.append((v, pos, _pow10(v)))
+        if self.kind == "log":
+            pure = [c for c in chosen if np.isclose(np.log10(c[0]) % 1, 0) or np.isclose(np.log10(c[0]) % 1, 1)]
+            if len(pure) >= 3:
+                chosen = pure
+        return sorted(chosen, key=lambda t: t[1])
 
 
-def _short(v):
+def _short(v, step=1.0):
     v = float(v)
-    if abs(v) >= 1000:
+    if abs(v) >= 1000 and step >= 1000:
         return f"{v / 1000:.0f}K"
+    if step < 1:
+        return f"{v:.{int(np.ceil(-np.log10(step)))}f}".replace(".", ",")
     return f"{v:.0f}"
 
 
 def _pow10(v):
     if v == 0:
         return "0"
+    e = np.log10(abs(v))
+    if abs(e - round(e)) > 1e-9:          # 2·10³, 5·10³ auf Log-Achsen
+        return f"{v:g}"
     sup = str.maketrans("-0123456789", "⁻⁰¹²³⁴⁵⁶⁷⁸⁹")
     e = int(round(np.log10(abs(v))))
     s = "−" if v < 0 else ""
