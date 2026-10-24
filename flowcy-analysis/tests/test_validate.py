@@ -111,3 +111,26 @@ def test_flowjo_concordance(wsp, fcs):
     ref = df[df.status.isin(["gleich", "≈", "abweichend"])]
     if len(ref):
         assert (ref.status != "abweichend").mean() >= 0.8
+
+
+def test_never_writes_into_dropbox(tmp_path, monkeypatch, study):
+    from flowcy.safety import ProtectedPathError, check_writable, is_protected
+    assert is_protected("/Users/x/Library/CloudStorage/Dropbox/Käthe/a.json")
+    assert is_protected("/Users/x/Dropbox/lab/b")
+    assert not is_protected(tmp_path / "ok")
+    with pytest.raises(ProtectedPathError):
+        check_writable("/Users/x/Dropbox/out")
+    box = tmp_path / "Dropbox" / "Daten"
+    box.mkdir(parents=True)
+    with pytest.raises(SystemExit):
+        run([study[0]], box / "bericht", log=lambda *_: None)
+    assert not (box / "bericht").exists()
+    t = GatingTree()
+    with pytest.raises(ProtectedPathError):
+        t.save(box / "s.flowcy.json")
+    # eigener Schutzordner über Umgebungsvariable
+    monkeypatch.setenv("FLOWCY_READONLY", str(tmp_path / "roh"))
+    assert is_protected(tmp_path / "roh" / "x.json")
+    # Cache in geschütztem Ort: Laden klappt trotzdem, nur ohne Cache
+    s = load_sample(pathlib.Path(study[0]) / "K01_PBMC.fcs", cache_dir=box / "cache")
+    assert s.n_events > 0 and not (box / "cache").exists()

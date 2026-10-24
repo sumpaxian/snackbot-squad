@@ -198,6 +198,8 @@ def load_sample(path, checksum: bool = True, name: str | None = None, cache_dir=
                 pass
         s = load_sample(path, checksum=checksum, name=name, apply_gain=apply_gain)
         try:
+            from .safety import check_writable
+            check_writable(cache_dir)
             cache_dir.mkdir(parents=True, exist_ok=True)
             r32 = s.raw.astype(np.float32)
             store = r32 if np.array_equal(r32, s.raw) else s.raw   # verlustfrei, sonst float64
@@ -208,7 +210,7 @@ def load_sample(path, checksum: bool = True, name: str | None = None, cache_dir=
                 "metadata": {k: str(v) for k, v in s.metadata.items()},
                 "spill": [s.spill[0], s.spill[1].tolist()] if s.spill else None, "sha256": s.checksum,
                 "source": str(path)}, ensure_ascii=False), encoding="utf-8")
-        except OSError:
+        except OSError:   # auch ProtectedPathError: dann eben ohne Cache
             pass
         return s
     import flowkit as fk

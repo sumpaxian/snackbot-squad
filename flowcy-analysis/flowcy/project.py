@@ -326,6 +326,8 @@ class Project:
 
     def save(self, path=None):
         path = pathlib.Path(path or self.file or PROJECT_DIR / f"{_slug(self.name)}.flowcy-projekt.json")
+        from .safety import check_writable
+        check_writable(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(self.to_dict(), ensure_ascii=False, indent=1), encoding="utf-8")
         self.file = str(path)

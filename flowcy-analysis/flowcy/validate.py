@@ -121,6 +121,11 @@ def run(folders, out, gates=None, wsp=(), pattern=".", max_files=None, checksum=
     for f in folders:
         if f.is_dir() and (out == f or f in out.parents):
             raise SystemExit(f"Ausgabeordner {out} liegt im Datenordner {f} – bitte einen eigenen Ordner wählen")
+    from .safety import ProtectedPathError, check_writable
+    try:
+        check_writable(out)
+    except ProtectedPathError as e:
+        raise SystemExit(str(e))
     out.mkdir(parents=True, exist_ok=True)
     logf = open(out / "protokoll.txt", "a", encoding="utf-8")
 

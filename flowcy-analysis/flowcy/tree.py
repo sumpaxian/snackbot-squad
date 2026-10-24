@@ -244,6 +244,8 @@ class GatingTree:
         return t
 
     def save(self, path):
+        from .safety import check_writable
+        check_writable(path)
         pathlib.Path(path).write_text(json.dumps(self.to_dict(), ensure_ascii=False, indent=1), encoding="utf-8")
 
     @classmethod

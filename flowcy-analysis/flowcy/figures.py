@@ -137,6 +137,8 @@ def sample_grid(project, node, x, y, samples=None, out=None, palette="pseudo", b
     if title:
         fig.suptitle(title, fontsize=7, fontweight="bold")
     out = pathlib.Path(out or (pathlib.Path.home() / "FlowCy" / "Export" / f"{_slug(project.name)}_{_slug(x)}_{_slug(y)}"))
+    from .safety import check_writable
+    check_writable(out.parent)
     out.parent.mkdir(parents=True, exist_ok=True)
     pdf, png = out.with_suffix(".pdf"), out.with_suffix(".png")
     fig.savefig(pdf, dpi=600)
