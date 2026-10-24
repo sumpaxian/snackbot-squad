@@ -58,6 +58,7 @@ def _err(e, code=400):
 def info():
     p = P()
     return {"version": __version__, "project": p.name, "folder": p.folder, "file": p.file,
+            "apply_gain": p.apply_gain,
             "samples": len(p.samples), "channels": p.channels() if p.samples else []}
 
 
@@ -629,6 +630,18 @@ def load_project(body: dict = Body(...)):
             _err(e)
         S.results_cache.clear()
         return info()
+
+
+@app.post("/api/project/settings")
+def settings(body: dict = Body(...)):
+    p = P()
+    with S.lock:
+        if "apply_gain" in body and bool(body["apply_gain"]) != p.apply_gain:
+            p.apply_gain = bool(body["apply_gain"])
+            p._cache.clear()
+            p.axes.clear()
+            S.results_cache.clear()
+        return {"apply_gain": p.apply_gain}
 
 
 @app.post("/api/project/user")

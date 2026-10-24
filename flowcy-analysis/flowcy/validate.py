@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 
 from . import __version__
-from .fcs import load_sample
+from .fcs import gains, load_sample
 from .proposals import singlet_band, valley_threshold
 from .qc import run_qc
 from .transforms import Transform, estimate_cofactor, is_scatter, is_time
@@ -115,7 +115,7 @@ def _files(folders, pattern):
 
 
 def run(folders, out, gates=None, wsp=(), pattern=".", max_files=None, checksum=True,
-        stats_channels=None, log=print):
+        stats_channels=None, log=print, apply_gain=True):
     folders = [pathlib.Path(f).expanduser().resolve() for f in folders]
     out = pathlib.Path(out).expanduser().resolve()
     for f in folders:
@@ -130,7 +130,8 @@ def run(folders, out, gates=None, wsp=(), pattern=".", max_files=None, checksum=
         logf.write(line + "\n")
         logf.flush()
 
-    say(f"FlowCy {__version__} · Python {platform.python_version()} · {platform.platform()}")
+    say(f"FlowCy {__version__} · Python {platform.python_version()} · {platform.platform()} · "
+        f"$PnG {'angewandt' if apply_gain else 'nicht angewandt'}")
     files = _files(folders, pattern)
     if max_files:
         files = files[:max_files]
@@ -140,12 +141,13 @@ def run(folders, out, gates=None, wsp=(), pattern=".", max_files=None, checksum=
     for i, p in enumerate(files, 1):
         try:
             t0 = time.perf_counter()
-            s = load_sample(p, checksum=checksum)
+            s = load_sample(p, checksum=checksum, apply_gain=apply_gain)
             t_load = time.perf_counter() - t0
             sm = s.summary()
             inv.append({"file": p.name, "path": str(p), "events": s.n_events, "channels": len(s.channels),
                         "cytometer": sm["cytometer"], "date": sm["date"], "fcs_version": sm["fcs_version"],
                         "has_spill": sm["has_spill"], "sha256": sm["sha256"], "size_mb": p.stat().st_size / 1e6,
+                        "gain_channels": ", ".join(f"{s.channels[i]}×{g:g}" for i, g in gains(s.metadata, len(s.channels)).items()),
                         "load_s": round(t_load, 3)})
             chans[p.name] = list(zip(s.channels, s.labels))
             q = run_qc(s)

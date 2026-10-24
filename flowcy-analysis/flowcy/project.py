@@ -54,6 +54,7 @@ class Project:
         self._lock = threading.RLock()
         self.cache_size = 3
         self.cache_dir = CACHE_DIR
+        self.apply_gain = True
 
     # --- Panels ------------------------------------------------------------------
     @property
@@ -135,7 +136,7 @@ class Project:
                 self._cache.move_to_end(name)
                 return self._cache[name]
             entry = self.samples[name]
-            s = load_sample(entry["path"], checksum=False, cache_dir=self.cache_dir)
+            s = load_sample(entry["path"], checksum=False, cache_dir=self.cache_dir, apply_gain=self.apply_gain)
             s.group = entry.get("group", "")
             ex = self.excluded_time.get(name)
             if ex and s.time_channel:
@@ -319,6 +320,7 @@ class Project:
         return {"format": "flowcy-project", "version": 1, "name": self.name, "folder": self.folder,
                 "samples": [{k: e.get(k) for k in ("name", "path", "group", "panel")} for e in self.samples.values()],
                 "axes": self.axes, "excluded_time": self.excluded_time, "panel": self.panel,
+                "apply_gain": self.apply_gain,
                 "trees": {k: t.to_dict() for k, t in self.trees.items()},
                 "saved": dt.datetime.now().isoformat(timespec="seconds")}
 
@@ -340,6 +342,7 @@ class Project:
                 p.samples[s["name"]]["group"] = s.get("group", "")
                 p.samples[s["name"]]["panel"] = s.get("panel") or "Standard"
         p.axes = d.get("axes", {})
+        p.apply_gain = d.get("apply_gain", True)
         p.excluded_time = d.get("excluded_time", {})
         if "trees" in d:
             p.trees = {k: GatingTree.from_dict(t) for k, t in d["trees"].items()}

@@ -134,9 +134,24 @@ class Sample:
 CACHE_VERSION = 1
 
 
-def _cache_key(path: pathlib.Path) -> str:
+def _cache_key(path: pathlib.Path, apply_gain=True) -> str:
     st = path.stat()
-    return hashlib.sha1(f"{path.resolve()}|{st.st_size}|{st.st_mtime_ns}|{CACHE_VERSION}".encode()).hexdigest()[:20]
+    raw = f"{path.resolve()}|{st.st_size}|{st.st_mtime_ns}|{CACHE_VERSION}|gain={apply_gain}"
+    return hashlib.sha1(raw.encode()).hexdigest()[:20]
+
+
+def gains(metadata, n):
+    """Kanäle mit Verstärkung $PnG ≠ 1 (nur lineare Kanäle, $PnE = 0,0)."""
+    out = {}
+    for i in range(1, n + 1):
+        try:
+            g = float(metadata.get(f"p{i}g", 1) or 1)
+        except ValueError:
+            continue
+        e = str(metadata.get(f"p{i}e", "0,0")).replace(" ", "")
+        if g != 1 and e in ("0,0", "0.0,0.0", "0,0.0", "0.0,0"):
+            out[i - 1] = g
+    return out
 
 
 def prune_cache(cache_dir, max_bytes=8e9):
@@ -157,14 +172,19 @@ def prune_cache(cache_dir, max_bytes=8e9):
     return removed
 
 
-def load_sample(path, checksum: bool = True, name: str | None = None, cache_dir=None) -> Sample:
+def load_sample(path, checksum: bool = True, name: str | None = None, cache_dir=None,
+                apply_gain: bool = True) -> Sample:
     """FCS-Datei lesen. Mit cache_dir wird ein Abbild (.npy + .json) angelegt und beim nächsten
-    Mal per Memory-Map geladen – um ein Vielfaches schneller als erneutes Parsen."""
+    Mal per Memory-Map geladen – um ein Vielfaches schneller als erneutes Parsen.
+
+    apply_gain: Werte linearer Kanäle durch $PnG teilen (FCS-Standard, FlowKit). False liefert
+    die gespeicherten Werte wie flowio ohne Vorverarbeitung – nötig, wenn Gates in diesen
+    Einheiten gezeichnet wurden."""
     path = pathlib.Path(path)
     if cache_dir:
         import json
         cache_dir = pathlib.Path(cache_dir)
-        key = _cache_key(path)
+        key = _cache_key(path, apply_gain)
         npy, meta = cache_dir / f"{key}.npy", cache_dir / f"{key}.json"
         if npy.exists() and meta.exists():
             try:
@@ -176,7 +196,7 @@ def load_sample(path, checksum: bool = True, name: str | None = None, cache_dir=
                               checksum=m.get("sha256") if checksum else None)
             except Exception:  # noqa: BLE001 – defekter Cache: neu einlesen
                 pass
-        s = load_sample(path, checksum=checksum, name=name)
+        s = load_sample(path, checksum=checksum, name=name, apply_gain=apply_gain)
         try:
             cache_dir.mkdir(parents=True, exist_ok=True)
             r32 = s.raw.astype(np.float32)
@@ -198,6 +218,9 @@ def load_sample(path, checksum: bool = True, name: str | None = None, cache_dir=
     raw = np.asarray(s.get_events(source="raw"), dtype=np.float64)
     md = {str(k).lower().lstrip("$"): v for k, v in s.get_metadata().items()}
     n = len(s.pnn_labels)
+    if not apply_gain:
+        for i, g in gains(md, n).items():
+            raw[:, i] *= g
     ranges = []
     for i in range(1, n + 1):
         try:

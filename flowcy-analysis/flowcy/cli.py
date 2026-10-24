@@ -18,6 +18,7 @@ def main(argv=None):
     v.add_argument("--max-files", type=int)
     v.add_argument("--no-checksum", action="store_true")
     v.add_argument("--channels", nargs="*", help="Kanäle für Median/rCV in der Statistik")
+    v.add_argument("--no-gain", action="store_true", help="$PnG nicht anwenden (Werte wie flowio ohne Vorverarbeitung)")
 
     d = sub.add_parser("demo", help="synthetische Beispielstudie erzeugen")
     d.add_argument("folder")
@@ -31,7 +32,8 @@ def main(argv=None):
     if args.cmd == "validate":
         from .validate import run
         s = run(args.folders, args.out, gates=args.gates, wsp=args.wsp, pattern=args.pattern,
-                max_files=args.max_files, checksum=not args.no_checksum, stats_channels=args.channels)
+                max_files=args.max_files, checksum=not args.no_checksum, stats_channels=args.channels,
+                apply_gain=not args.no_gain)
         print(s)
         return 0 if s["errors"] == 0 else 1
     if args.cmd == "demo":

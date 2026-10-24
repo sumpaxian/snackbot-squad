@@ -88,6 +88,7 @@ async function refreshInfo() {
   const info = await api("GET", "/api/info");
   st.channels = info.channels || [];
   st.projectName = info.project || "–";
+  $("#applyGain").checked = info.apply_gain !== false;
   $("#projectName").textContent = info.project || "–";
   st.samples = await api("GET", "/api/samples");
   if (!st.sample || !st.samples.find((x) => x.name === st.sample)) st.sample = st.samples.find((x) => !x.error)?.name || null;
@@ -138,6 +139,9 @@ $("#btnLoadProject").addEventListener("click", async () => {
   else p = await ask("Projekt laden", "Pfad zur .flowcy-projekt.json", "");
   if (!p) return;
   try { await api("POST", "/api/project/load", { path: p }); await refreshInfo(); toast("Projekt geladen"); } catch (e) { fail(e); }
+});
+$("#applyGain").addEventListener("change", async (e) => {
+  try { await api("POST", "/api/project/settings", { apply_gain: e.target.checked }); await refreshInfo(); renderPlots(); toast(e.target.checked ? "$PnG wird angewandt" : "$PnG wird nicht angewandt"); } catch (err) { fail(err); }
 });
 $("#userName").value = store.get("user", "");
 $("#userName").addEventListener("change", (e) => { store.set("user", e.target.value); api("POST", "/api/project/user", { user: e.target.value }).catch(fail); });

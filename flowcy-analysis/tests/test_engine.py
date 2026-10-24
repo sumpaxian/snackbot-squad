@@ -207,3 +207,15 @@ def test_disk_cache_identical(study, tmp_path):
         np.testing.assert_array_equal(s.spill[1], a.spill[1])
     tree, _ = build_strategy(a)
     assert [r["count"] for r in tree.statistics(a)] == [r["count"] for r in tree.statistics(c)]
+
+
+def test_gain_option(tmp_path):
+    import flowio
+    p = tmp_path / "g.fcs"
+    data = np.array([[100, 200, 50], [10, 20, 5]], dtype=np.float32)
+    with open(p, "wb") as f:
+        flowio.create_fcs(f, data.ravel(), ["FSC-A", "FL1-A", "Time"], metadata_dict={"P1G": "2", "P2G": "4"})
+    np.testing.assert_allclose(load_sample(p).raw[0], [50, 50, 50])
+    np.testing.assert_allclose(load_sample(p, apply_gain=False).raw[0], [100, 200, 50])
+    np.testing.assert_allclose(load_sample(p, apply_gain=False, cache_dir=tmp_path / "c").raw[0], [100, 200, 50])
+    np.testing.assert_allclose(np.asarray(load_sample(p, cache_dir=tmp_path / "c").raw[0]), [50, 50, 50])
